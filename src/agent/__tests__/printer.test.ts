@@ -5,6 +5,7 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { Graph } from '../../multiagent/graph.js'
 
 describe('AgentPrinter', () => {
   describe('end-to-end scenarios', () => {
@@ -198,6 +199,95 @@ All done.
 \n`
 
       expect(allOutput).toBe(expected)
+    })
+
+    it('separates output from different graph nodes', async () => {
+      const modelA = new MockMessageModel().addTurn(new TextBlock('first'))
+      const modelB = new MockMessageModel().addTurn(new TextBlock('second'))
+
+      const graph = new Graph({
+        nodes: [
+          new Agent({ model: modelA, printer: false, id: 'a' }),
+          new Agent({ model: modelB, printer: false, id: 'b' }),
+        ],
+        edges: [['a', 'b']],
+      })
+
+      const outputs: string[] = []
+      const printer = new AgentPrinter((text: string) => outputs.push(text))
+
+      for await (const event of graph.stream('test')) {
+        printer.processEvent(event)
+      }
+
+      const allOutput = outputs.join('')
+      expect(allOutput).toContain('first')
+      expect(allOutput).toContain('second')
+      expect(allOutput).not.toMatch(/first[^\n]*second/)
+    })
+  })
+
+  describe('multi-agent events', () => {
+    it('handles nested multi-agent afterNodeCallEvent', () => {
+      const outputs: string[] = []
+      const printer = new AgentPrinter((text: string) => outputs.push(text))
+
+      printer.processEvent({
+        type: 'nodeStreamUpdateEvent',
+        nodeId: 'outer',
+        nodeType: 'multiAgent',
+        state: {},
+        inner: {
+          source: 'multiAgent',
+          event: {
+            type: 'afterNodeCallEvent',
+            nodeId: 'inner',
+            state: {},
+            orchestrator: {},
+          },
+        },
+      } as any)
+
+      expect(outputs.join('')).toBe('\n')
+    })
+
+    it('ignores custom source in nodeStreamUpdateEvent', () => {
+      const outputs: string[] = []
+      const printer = new AgentPrinter((text: string) => outputs.push(text))
+
+      printer.processEvent({
+        type: 'nodeStreamUpdateEvent',
+        nodeId: 'node-1',
+        nodeType: 'custom',
+        state: {},
+        inner: {
+          source: 'custom',
+          event: {},
+        },
+      } as any)
+
+      expect(outputs).toStrictEqual([])
+    })
+
+    it('ignores non-boundary multi-agent events', () => {
+      const outputs: string[] = []
+      const printer = new AgentPrinter((text: string) => outputs.push(text))
+
+      printer.processEvent({
+        type: 'beforeNodeCallEvent',
+        nodeId: 'node-1',
+        state: {},
+        orchestrator: {},
+      } as any)
+
+      printer.processEvent({
+        type: 'multiAgentHandoffEvent',
+        source: 'node-1',
+        targets: ['node-2'],
+        state: {},
+      } as any)
+
+      expect(outputs).toStrictEqual([])
     })
   })
 })

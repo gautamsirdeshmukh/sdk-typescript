@@ -5,6 +5,7 @@ import type {
   ModelContentBlockStartEventData,
 } from '../models/streaming.js'
 import type { ToolResultEvent } from '../hooks/events.js'
+import type { MultiAgentStreamEvent } from '../multiagent/index.js'
 
 /**
  * Creates a default appender function for the current environment.
@@ -35,7 +36,7 @@ export interface Printer {
    * Process a streaming event from the agent.
    * @param event - The event to process
    */
-  processEvent(event: AgentStreamEvent): void
+  processEvent(event: AgentStreamEvent | MultiAgentStreamEvent): void
 }
 
 /**
@@ -69,7 +70,7 @@ export class AgentPrinter implements Printer {
    * Handles text deltas, reasoning content, and tool execution events.
    * @param event - The event to process
    */
-  public processEvent(event: AgentStreamEvent): void {
+  public processEvent(event: AgentStreamEvent | MultiAgentStreamEvent): void {
     switch (event.type) {
       case 'modelStreamUpdateEvent':
         this.handleModelStreamEvent(event.event)
@@ -83,7 +84,16 @@ export class AgentPrinter implements Printer {
         this.write('\n')
         break
 
-      // Ignore other event types
+      case 'afterNodeCallEvent':
+        this.write('\n')
+        break
+
+      case 'nodeStreamUpdateEvent':
+        if (event.inner.source === 'agent' || event.inner.source === 'multiAgent') {
+          this.processEvent(event.inner.event)
+        }
+        break
+
       default:
         break
     }
