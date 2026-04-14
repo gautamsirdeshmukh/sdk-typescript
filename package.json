@@ -30,6 +30,10 @@
       "types": "./dist/src/models/google/index.d.ts",
       "default": "./dist/src/models/google/index.js"
     },
+    "./models/ollama": {
+      "types": "./dist/src/models/ollama.d.ts",
+      "default": "./dist/src/models/ollama.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
@@ -136,6 +140,7 @@
     "eslint": "^9.0.0",
     "eslint-plugin-tsdoc": "^0.5.0",
     "husky": "^9.1.7",
+    "ollama": "^0.6.3",
     "openai": "^6.7.0",
     "playwright": "^1.56.1",
     "prettier": "^3.7.4",
@@ -174,6 +179,7 @@
     "@opentelemetry/sdk-trace-base": "^1.30.1",
     "@opentelemetry/sdk-trace-node": "^1.30.1",
     "express": "^5.1.0",
+    "ollama": "^0.6.3",
     "openai": "^6.7.0",
     "zod": "^4.1.12"
   },
@@ -194,6 +200,9 @@
       "optional": true
     },
     "@google/genai": {
+      "optional": true
+    },
+    "ollama": {
       "optional": true
     },
     "openai": {
