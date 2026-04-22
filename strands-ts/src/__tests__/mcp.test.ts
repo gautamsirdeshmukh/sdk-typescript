@@ -4,6 +4,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { McpClient } from '../mcp.js'
 import { McpTool } from '../tools/mcp-tool.js'
 import { JsonBlock, type TextBlock, type ToolResultBlock } from '../types/messages.js'
+import { ImageBlock, encodeBase64 } from '../types/media.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { ToolContext } from '../tools/tool.js'
 import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
@@ -369,6 +370,117 @@ describe('MCP Integration', () => {
 
       expect(result.status).toBe('error')
       expect((result.content[0] as TextBlock).text).toContain('missing content array')
+    })
+
+    it('converts MCP ImageContent with valid image MIME to ImageBlock', async () => {
+      const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'image', data: encodeBase64(pngBytes), mimeType: 'image/png' }],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.status).toBe('success')
+      const block = result.content[0] as ImageBlock
+      expect(block).toBeInstanceOf(ImageBlock)
+      expect(block.format).toBe('png')
+      expect(block.source).toEqual({ type: 'imageSourceBytes', bytes: pngBytes })
+    })
+
+    it('falls back to JsonBlock for MCP ImageContent with unsupported MIME type', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'image', data: 'abc', mimeType: 'image/bmp' }],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.content[0]).toBeInstanceOf(JsonBlock)
+    })
+
+    it('falls back to JsonBlock for MCP ImageContent missing data field', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'image', mimeType: 'image/png' }],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.content[0]).toBeInstanceOf(JsonBlock)
+    })
+
+    it('converts MCP EmbeddedResource with text resource to TextBlock', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [
+          { type: 'resource', resource: { text: 'file contents here', uri: 'file:///a.txt', mimeType: 'text/plain' } },
+        ],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.status).toBe('success')
+      expect((result.content[0] as TextBlock).text).toBe('file contents here')
+    })
+
+    it('converts MCP EmbeddedResource with blob + image MIME to ImageBlock', async () => {
+      const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [
+          {
+            type: 'resource',
+            resource: { blob: encodeBase64(jpegBytes), uri: 'file:///photo.jpg', mimeType: 'image/jpeg' },
+          },
+        ],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      const block = result.content[0] as ImageBlock
+      expect(block).toBeInstanceOf(ImageBlock)
+      expect(block.format).toBe('jpeg')
+      expect(block.source).toEqual({ type: 'imageSourceBytes', bytes: jpegBytes })
+    })
+
+    it('falls back to JsonBlock for MCP EmbeddedResource with blob + non-image MIME', async () => {
+      const base64Pdf = encodeBase64(new Uint8Array([0x25, 0x50, 0x44, 0x46]))
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [
+          { type: 'resource', resource: { blob: base64Pdf, uri: 'file:///doc.pdf', mimeType: 'application/pdf' } },
+        ],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.content[0]).toBeInstanceOf(JsonBlock)
+    })
+
+    it('falls back to JsonBlock for MCP EmbeddedResource with neither text nor blob', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'resource', resource: { uri: 'file:///something', mimeType: 'application/octet-stream' } }],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.content[0]).toBeInstanceOf(JsonBlock)
+    })
+
+    it('maps mixed content types in correct order', async () => {
+      const base64Png = encodeBase64(new Uint8Array([0x89, 0x50]))
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [
+          { type: 'text', text: 'description' },
+          { type: 'image', data: base64Png, mimeType: 'image/png' },
+          {
+            type: 'resource',
+            resource: { text: 'readme contents', uri: 'file:///README.md', mimeType: 'text/markdown' },
+          },
+        ],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.content).toHaveLength(3)
+      expect((result.content[0] as TextBlock).text).toBe('description')
+      expect(result.content[1]).toBeInstanceOf(ImageBlock)
+      expect((result.content[2] as TextBlock).text).toBe('readme contents')
     })
   })
 })

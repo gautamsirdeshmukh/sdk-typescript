@@ -1,7 +1,10 @@
 import { createErrorResult, Tool, type ToolContext, type ToolStreamGenerator } from './tool.js'
 import type { ToolSpec } from './types.js'
 import type { JSONSchema, JSONValue } from '../types/json.js'
-import { JsonBlock, TextBlock, ToolResultBlock } from '../types/messages.js'
+import { JsonBlock, TextBlock, ToolResultBlock, type ToolResultContent } from '../types/messages.js'
+import { ImageBlock, decodeBase64 } from '../types/media.js'
+import { toMediaFormat, toMimeType, type ImageFormat } from '../mime.js'
+import { logger } from '../logging/logger.js'
 import type { McpClient } from '../mcp.js'
 
 export interface McpToolConfig {
@@ -48,13 +51,7 @@ export class McpTool extends Tool {
         throw new Error('Invalid tool result from MCP Client: missing content array')
       }
 
-      const content = rawResult.content.map((item: unknown) => {
-        if (this._isMcpTextContent(item)) {
-          return new TextBlock(item.text)
-        }
-
-        return new JsonBlock({ json: item as JSONValue })
-      })
+      const content: ToolResultContent[] = rawResult.content.map((item: unknown) => this._mapMcpContent(item))
 
       if (content.length === 0) {
         content.push(new TextBlock('Tool execution completed successfully with no output.'))
@@ -86,6 +83,45 @@ export class McpTool extends Tool {
   }
 
   /**
+   * Maps a single MCP content item to the corresponding SDK ToolResultContent block.
+   */
+  private _mapMcpContent(item: unknown): ToolResultContent {
+    if (this._isMcpTextContent(item)) {
+      return new TextBlock(item.text)
+    }
+
+    if (this._isMcpImageContent(item)) {
+      const format = toMediaFormat(item.mimeType)
+      if (format && this._isImageFormat(format)) {
+        return new ImageBlock({ format, source: { bytes: decodeBase64(item.data) } })
+      }
+      logger.warn(`mimeType=<${item.mimeType}> | unsupported MCP image content MIME type, falling back to JSON`)
+      return new JsonBlock({ json: item as JSONValue })
+    }
+
+    if (this._isMcpResourceContent(item)) {
+      const resource = item.resource as Record<string, unknown>
+
+      if (typeof resource.text === 'string') {
+        return new TextBlock(resource.text)
+      }
+
+      if (typeof resource.blob === 'string') {
+        const mimeType = typeof resource.mimeType === 'string' ? resource.mimeType : undefined
+        const format = mimeType ? toMediaFormat(mimeType) : undefined
+        if (format && this._isImageFormat(format)) {
+          return new ImageBlock({ format, source: { bytes: decodeBase64(resource.blob) } })
+        }
+        logger.warn(
+          `mimeType=<${mimeType ?? 'unknown'}> | unsupported MCP embedded resource MIME type, falling back to JSON`
+        )
+      }
+    }
+
+    return new JsonBlock({ json: item as JSONValue })
+  }
+
+  /**
    * Type Guard: Checks if an item is a Text content block.
    * \{ type: 'text'; text: string \}
    */
@@ -97,5 +133,40 @@ export class McpTool extends Tool {
     const record = value as Record<string, unknown>
 
     return record.type === 'text' && typeof record.text === 'string'
+  }
+
+  /**
+   * Type Guard: Checks if an item is an Image content block.
+   * \{ type: 'image'; data: string; mimeType: string \}
+   */
+  private _isMcpImageContent(value: unknown): value is { type: 'image'; data: string; mimeType: string } {
+    if (typeof value !== 'object' || value === null) {
+      return false
+    }
+
+    const record = value as Record<string, unknown>
+
+    return record.type === 'image' && typeof record.data === 'string' && typeof record.mimeType === 'string'
+  }
+
+  /**
+   * Type Guard: Checks if an item is an EmbeddedResource content block.
+   * \{ type: 'resource'; resource: Record\<string, unknown\> \}
+   */
+  private _isMcpResourceContent(value: unknown): value is { type: 'resource'; resource: Record<string, unknown> } {
+    if (typeof value !== 'object' || value === null) {
+      return false
+    }
+
+    const record = value as Record<string, unknown>
+
+    return record.type === 'resource' && typeof record.resource === 'object' && record.resource !== null
+  }
+
+  /**
+   * Type Guard: Checks if a media format string is a supported image format.
+   */
+  private _isImageFormat(format: string): format is ImageFormat {
+    return toMimeType(format)?.startsWith('image/') ?? false
   }
 }
